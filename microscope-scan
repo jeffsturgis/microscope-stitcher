@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+import time
+import serial
+import serial.tools.list_ports
+
+# Identify the device from lsusb output
+VID_PID = '1A86:7523'  # Vendor ID and Product ID for CH340, corrected to uppercase
+BAUD_RATE = 115200  # Common baud rate, adjust if needed
+
+def find_ch340_port():
+    ports = list(serial.tools.list_ports.comports())
+    for port in ports:
+        if VID_PID in port.hwid:
+            return port.device
+    raise RuntimeError("CH340 device not found")
+
+def generate_gcode(x, y):
+    start_time = time.time()  # Anchor to the start time of the script
+    formatted_start_time = time.strftime("%Y%m%d_%H%M%S", time.localtime(start_time))
+    start_time_dir = os.path.join(os.getcwd(), formatted_start_time)
+    os.makedirs(start_time_dir, exist_ok=True)
+    for xpos in range(x + 1):  # +1 because range is exclusive of the end value
+        for ypos in range(y + 1):
+            # Set your G-code for minor adjustments
+            gcode_command = f"G1 X{xpos} Y{ypos} F1000"  # Example G-code for movement
+            
+            # Print or log the G-code command for debugging
+            print(f"Executing G-code: {gcode_command}")
+            
+            # Construct the filename for the image
+            
+            image_filename = f"image-{xpos}-{ypos}.jpg"
+            full_path = os.path.join(start_time_dir, image_filename)
+            
+            try:
+                # Send G-code to the serial device
+                SERIAL_PORT = find_ch340_port()
+                with serial.Serial(
+                    port=SERIAL_PORT,
+                    baudrate=BAUD_RATE,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    bytesize=serial.EIGHTBITS,
+                    timeout=1
+                ) as ser:
+                    ser.write(f"{gcode_command}\r\n".encode())  # Write the command with a newline
+                    print(f"Sent G-code: {gcode_command}")
+                    
+                    # Wait for a small amount of time to ensure the movement is complete
+                    time.sleep(1)  # Adjust based on your device's response time
+
+                # Call the bash script to save the image
+                subprocess.run(["bash", "save-image", full_path], check=True)
+                print(f"Saved image as {image_filename}")
+            except subprocess.CalledProcessError as e:
+                print(f"Error calling save-image for {full_path}: {e}")
+            except serial.SerialException as e:
+                print(f"Error connecting to the serial port: {e}")
+            except RuntimeError as e:
+                print(f"Error: {e}")
+
+    # Calculate how long the process took
+    end_time = time.time()
+    duration = end_time - start_time
+    print(f"Total time taken: {duration:.2f} seconds")
+
+
+
+if __name__ == "__main__":
+    x = int(input("Enter the number of milimeters to scan along X axis of your 3D Printer: "))
+    y = int(input("Enter the number of milimeters to scan along Y axis of your 3D Printer: "))
+    generate_gcode(x, y)

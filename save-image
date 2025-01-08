@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# Check if an argument was provided
+if [ $# -eq 0 ]; then
+    echo "Usage: $0 <filename>"
+    exit 1
+fi
+
+# The filename is the first argument
+filename="$1"
+
+# Run ffmpeg with the provided filename for output
+ffmpeg -f v4l2 -framerate 30 -video_size 640x480 -i /dev/video0 -vframes 1 -f image2 -vcodec mjpeg "$filename"
+
+# Check if the command was successful
+if [ $? -eq 0 ]; then
+    echo "Image saved as $filename"
+else
+    echo "Error capturing image. Check if the camera is available and permissions are correct."
+fi

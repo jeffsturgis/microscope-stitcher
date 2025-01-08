@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# Check if directory argument is provided
+if [ $# -eq 0 ]; then
+    echo "Usage: $0 <directory>"
+    exit 1
+fi
+
+dir="$1"
+
+# Check if directory exists
+if [ ! -d "$dir" ]; then
+    echo "Directory $dir does not exist."
+    exit 1
+fi
+
+# Find max X and Y from filenames
+max_x=0
+max_y=0
+for img in "$dir"/image-*.jpg; do
+    if [[ $img =~ image-([0-9]+)-([0-9]+).jpg ]]; then
+        x=${BASH_REMATCH[1]}
+        y=${BASH_REMATCH[2]}
+        ((x > max_x)) && max_x=$x
+        ((y > max_y)) && max_y=$y
+    fi
+done
+
+# Function to calculate overlap
+calculate_overlap() {
+    local img1=$1
+    local img2=$2
+    local axis=$3  # Either 'x' for horizontal or 'y' for vertical
+
+    # Get dimensions of images
+    read width height <<< $(identify -format "%[fx:w] %[fx:h]\n" "$img1")
+
+    if [ "$axis" == "x" ]; then
+        # Compare right edge of img1 with left edge of img2
+        overlap=$(compare -metric RMSE "$img1" "$img2" -geometry "${width}x${height}+$(($width/2-20))+0" null: 2>&1 | awk '{print $1}')
+    else
+        # Compare bottom edge of img1 with top edge of img2
+        overlap=$(compare -metric RMSE "$img1" "$img2" -geometry "${width}x${height}+0+$(($height/2-20))" null: 2>&1 | awk '{print $1}')
+    fi
+
+    # A very simplistic overlap detection. Adjust threshold as needed.
+    if (( $(echo "$overlap < 0.1" | bc -l) )); then
+        echo 20  # Assuming 20 pixels of overlap if RMSE is below a certain threshold
+    else
+        echo 0  # No overlap detected
+    fi
+}
+
+# Stitch images row by row
+temp_files=()
+for (( i=0; i<=$max_y; i++ )); do
+    row=""
+    for (( j=0; j<=$max_x; j++ )); do
+        img="$dir/image-$i-$j.jpg"
+        if [[ -f "$img" ]]; then
+            if [ -z "$row" ]; then
+                row="$img"
+            else
+                overlap=$(calculate_overlap "$row" "$img" "x")
+                if [ "$overlap" -gt 0 ]; then
+                    # If overlap detected, adjust for it (very simplistic method)
+                    montage -geometry "${width}x${height}+$((-$overlap))+0" -tile 1x1 "$row" "$img" "temp_row_$i-$j.jpg"
+                    mv "temp_row_$i-$j.jpg" "$row"
+                else
+                    # No overlap, concatenate horizontally
+                    montage -geometry "${width}x${height}+0+0" -tile 1x1 "$row" "$img" "temp_row_$i-$j.jpg"
+                    mv "temp_row_$i-$j.jpg" "$row"
+                fi
+            fi
+        fi
+    done
+    temp_files+=("$row")
+done
+
+# Now stitch rows vertically
+final_image="$dir-mosaic.jpg"
+if [ ${#temp_files[@]} -gt 1 ]; then
+    montage -geometry "+0+0" -tile 1x${#temp_files[@]} "${temp_files[@]}" "$final_image"
+else
+    cp "${temp_files[0]}" "$final_image"
+fi
+
+# Clean up temporary files
+for temp in "${temp_files[@]}"; do
+    [ -f "$temp" ] && rm "$temp"
+done
+
+echo "Mosaic image created: $final_image"
